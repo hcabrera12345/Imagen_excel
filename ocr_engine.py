@@ -1,5 +1,5 @@
 import pytesseract
-from PIL import Image, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter
 import pandas as pd
 import re
 import io
@@ -8,78 +8,119 @@ import numpy as np
 
 def preprocess_image(image):
     """
-    Converts PIL image to grayscale and applies thresholding
-    to make text stand out (dot-matrix fix).
+    Improved preprocessing.
+    Instead of hard binary thresholding which loses details,
+    we use adaptive thresholding and scaling.
     """
-    # Convert PIL to OpenCV format (numpy array)
+    # Convert to OpenCV
     img_array = np.array(image)
-    
-    # Convert to grayscale if not already
     if len(img_array.shape) == 3:
         gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
     else:
         gray = img_array
 
-    # Apply simple thresholding to binarize the image
-    # Values below 150 become 0 (black), above become 255 (white)
-    # This helps remove faint noise and strengthens the dot-matrix text
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-    
-    # Optional: Dilate slightly to connect dots in dot-matrix
-    # kernel = np.ones((2,2), np.uint8)
-    # thresh = cv2.dilate(thresh, kernel, iterations=1)
-    
+    # 1. Resize/Scale up (helps with small dot-matrix text)
+    # Scale by 2x
+    height, width = gray.shape
+    gray = cv2.resize(gray, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
+
+    # 2. Denoise
+    gray = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+
+    # 3. Adaptive Thresholding (better for varying lighting)
+    # transforms to black and white but respects local contrast
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+    )
+
     return Image.fromarray(thresh)
 
 def process_image(image_bytes):
-    """
-    Takes raw image bytes, converts to image, runs OCR, 
-    and returns a pandas DataFrame with columns: 
-    FECHA, DESCRIPCION, MONTO, DOCUMENTO
-    """
-    
     # Load image
     original_image = Image.open(io.BytesIO(image_bytes))
     
-    # Preprocess image
+    # Try preprocessing
+    # If the user says "carga pero no lee nada", maybe the image is being corrupted by preprocessing.
+    # Let's try to pass the UPSCALED image but possibly without aggressive thresholding if Tesseract fails.
+    # For now, let's stick to a robust preprocess: Scale + Adaptive Thresh is usually standard.
     processed_image = preprocess_image(original_image)
     
-    # Perform OCR
-    # --psm 6: Assume a single uniform block of text.
-    # This works best for table-like structures.
+    # Configuration
+    # --psm 4: Assume a single column of text of variable sizes. 
+    # (6 is uniform block, also good). Let's stick to 6 but allow simpler fallback if needed.
     custom_config = r'--psm 6' 
     text = pytesseract.image_to_string(processed_image, config=custom_config)
     
     data = []
     
-    # Robust Regex Pattern
-    # This searches for:
-    # 1. Date+Time: (YYYY-MM-DD HH:mm)
-    # 2. Description: Anything in between (lazy match)
-    # 3. Amount: Number with decimal (e.g., 4800.00)
-    # 4. Document: Integer (e.g., 31571483)
-    # 5. It ignores any text after the Document number (like the "0-0 MAESTRIA..." part)
-    pattern = re.compile(r'^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2})\s+(.*?)\s+(\d+\.\d{2})\s+(\d+).*')
-    
     lines = text.split('\n')
     
+    # Flexible Parser strategy
+    # Instead of one giant Regex, locate anchors.
+    
     for line in lines:
-        line = line.strip()
-        if not line:
+        line_str = line.strip()
+        if len(line_str) < 10:
             continue
             
-        match = pattern.match(line)
-        if match:
-            fecha = match.group(1)
-            descripcion = match.group(2).strip()
-            monto = match.group(3)
-            documento = match.group(4)
+        # 1. Find Date (YYYY-MM-DD)
+        # We allow small OCR errors (like S instead of 5) but regex needs to be somewhat strict regarding format
+        date_match = re.search(r'(\d{4}-\d{2}-\d{2})', line_str)
+        
+        # 2. Find Amount (Number with dot: 4800.00)
+        # We look for the LAST occurrence of a price-like pattern in the line, 
+        # because the DOCUMENT number usually doesn't have a dot.
+        amount_matches = list(re.finditer(r'(\d+\.\d{2})', line_str))
+        
+        if date_match and amount_matches:
+            # We have a valid line candidate
+            
+            # --- EXTRACT DATA ---
+            
+            # DATE
+            fecha_str = date_match.group(1)
+            # Try to grab time if it exists right after date
+            # Date end index
+            date_end = date_match.end()
+            
+            # AMOUNT
+            # Assuming the amount is the one before the Document ID.
+            # Usually Amount is correct.
+            amount_match = amount_matches[-1] # Take the last found amount structure
+            monto_str = amount_match.group(1)
+            amount_start = amount_match.start()
+            
+            # DESCRIPTION
+            # Text strictly between Date(end) and Amount(start)
+            raw_desc = line_str[date_end:amount_start].strip()
+            
+            # Clean up Description
+            # Usually starts with Time (HH:mm), let's remove it if present
+            # Remove Time-like pattern at start
+            raw_desc = re.sub(r'^\d{2}:\d{2}\s+', '', raw_desc)
+            # Remove any leading/trailing weird chars
+            descripcion_str = raw_desc.strip()
+            
+            # DOCUMENT
+            # Text immediately after Amount
+            amount_end = amount_match.end()
+            remaining_text = line_str[amount_end:].strip()
+            
+            # The document is the first "word" in the remaining text
+            parts_after = remaining_text.split()
+            if parts_after:
+                documento_str = parts_after[0]
+            else:
+                documento_str = ""
+            
+            # Validate Document (should be numeric-ish)
+            # If it's mostly distinct chars, accept it.
             
             data.append({
-                "FECHA": fecha,
-                "DESCRIPCION": descripcion,
-                "MONTO": monto,
-                "DOCUMENTO": documento
+                "FECHA": fecha_str,
+                "DESCRIPCION": descripcion_str,
+                "MONTO": monto_str,
+                "DOCUMENTO": documento_str
             })
             
     df = pd.DataFrame(data)
