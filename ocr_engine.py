@@ -75,30 +75,26 @@ def process_image(image_bytes):
         if date_match and amount_matches:
             # We have a valid line candidate
             
-            # --- EXTRACT DATA ---
+            # VALIDATION AND FORMATTING
             
-            # DATE
-            fecha_str = date_match.group(1)
-            # Try to grab time if it exists right after date
-            # Date end index
-            date_end = date_match.end()
-            
-            # AMOUNT
-            # Assuming the amount is the one before the Document ID.
-            # Usually Amount is correct.
-            amount_match = amount_matches[-1] # Take the last found amount structure
-            monto_str = amount_match.group(1)
-            amount_start = amount_match.start()
-            
-            # DESCRIPTION
-            # Text strictly between Date(end) and Amount(start)
-            raw_desc = line_str[date_end:amount_start].strip()
+            # Date: Convert YYYY-MM-DD to DD/MM/YYYY
+            try:
+                dt_obj = pd.to_datetime(fecha_str)
+                fecha_formatted = dt_obj.strftime('%d/%m/%Y')
+            except:
+                fecha_formatted = fecha_str
+
+            # Amount: Convert to float for Excel
+            try:
+                monto_val = float(monto_str)
+            except:
+                monto_val = 0.0
             
             # Clean up Description
-            # Usually starts with Time (HH:mm), let's remove it if present
-            # Remove Time-like pattern at start
+            # Text strictly between Date(end) and Amount(start)
+            raw_desc = line_str[date_end:amount_start].strip()
+            # Remove Time-like pattern at start (e.g. 15:08)
             raw_desc = re.sub(r'^\d{2}:\d{2}\s+', '', raw_desc)
-            # Remove any leading/trailing weird chars
             descripcion_str = raw_desc.strip()
             
             # DOCUMENT
@@ -106,20 +102,16 @@ def process_image(image_bytes):
             amount_end = amount_match.end()
             remaining_text = line_str[amount_end:].strip()
             
-            # The document is the first "word" in the remaining text
             parts_after = remaining_text.split()
             if parts_after:
                 documento_str = parts_after[0]
             else:
                 documento_str = ""
             
-            # Validate Document (should be numeric-ish)
-            # If it's mostly distinct chars, accept it.
-            
             data.append({
-                "FECHA": fecha_str,
+                "FECHA": fecha_formatted,
                 "DESCRIPCION": descripcion_str,
-                "MONTO": monto_str,
+                "MONTO": monto_val,
                 "DOCUMENTO": documento_str
             })
             
