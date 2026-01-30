@@ -7,8 +7,7 @@ Este proyecto es una aplicación web construida con Python y Streamlit que permi
 - `app.py`: La aplicación principal de Streamlit.
 - `ocr_engine.py`: Lógica de extracción de texto (OCR) y procesamiento de datos.
 - `requirements.txt`: Librerías de Python necesarias.
-- `packages.txt`: Dependencias del sistema (Tesseract OCR) para Render.
-- `render.yaml`: Configuración para despliegue automático en Render.
+- `packages.txt`: Dependencias del sistema (Tesseract OCR) para Streamlit Cloud.
 
 ## Instalación Local
 
@@ -31,19 +30,19 @@ Este proyecto es una aplicación web construida con Python y Streamlit que permi
    streamlit run app.py
    ```
 
-## Despliegue en Render (Gratis)
+## Despliegue en Streamlit Community Cloud (Gratis)
 
-Este proyecto está listo para desplegarse en [Render](https://render.com).
+Este proyecto está listo para desplegarse en [Streamlit Cloud](https://streamlit.io/cloud).
 
-1. **GitHub**: Sube este código a un nuevo repositorio (público o privado) en GitHub. Asegúrate de incluir todos los archivos (`app.py`, `ocr_engine.py`, `requirements.txt`, `packages.txt`, `render.yaml`).
-2. **Render**:
-   - Crea una cuenta en Render.
-   - Ve a "Blueprints" y selecciona "New Blueprint Instance".
-   - Conecta tu repositorio de GitHub.
-   - Render detectará el archivo `render.yaml` y configurará todo automáticamente.
-   - Haz clic en "Apply".
-3. **¡Listo!**: En unos minutos, tu aplicación estará en línea y lista para usar.
+1. **GitHub**: Sube este código a GitHub (ya lo has hecho).
+2. **Streamlit Cloud**:
+   - Ve a [share.streamlit.io](https://share.streamlit.io/).
+   - Haz clic en "New app".
+   - Selecciona tu repositorio (`Imagen_excel`) y la rama (`main`).
+   - Selecciona `app.py` como el archivo principal.
+   - Haz clic en **Deploy**.
+   
+**Importante**: Streamlit Cloud leerá automáticamente el archivo `packages.txt` e instalará Tesseract por ti.
 
 ## Notas Importantes
-- La calidad de la extracción depende de la calidad de la imagen. Imágenes borrosas o con mala iluminación pueden fallar.
-- El formato esperado es específico (Fecha | Descripción | Monto | Documento). Otros formatos pueden requerir ajustes en el código (`ocr_engine.py`).
+- La calidad de la extracción depende de la calidad de la imagen.
