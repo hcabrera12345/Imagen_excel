@@ -75,7 +75,20 @@ def process_image(image_bytes):
         if date_match and amount_matches:
             # We have a valid line candidate
             
-            # VALIDATION AND FORMATTING
+            # --- EXTRACT DATA ---
+            
+            # DATE
+            # 1. Extract raw string
+            fecha_str = date_match.group(1)
+            date_end = date_match.end()
+            
+            # AMOUNT
+            # 2. Extract raw amount string
+            amount_match = amount_matches[-1] # Take the last found amount structure
+            monto_str = amount_match.group(1)
+            amount_start = amount_match.start()
+            
+            # --- VALIDATION AND FORMATTING ---
             
             # Date: Convert YYYY-MM-DD to DD/MM/YYYY
             try:
@@ -90,7 +103,7 @@ def process_image(image_bytes):
             except:
                 monto_val = 0.0
             
-            # Clean up Description
+            # DESCRIPTION
             # Text strictly between Date(end) and Amount(start)
             raw_desc = line_str[date_end:amount_start].strip()
             # Remove Time-like pattern at start (e.g. 15:08)
