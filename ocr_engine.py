@@ -1,8 +1,35 @@
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageOps
 import pandas as pd
 import re
 import io
+import cv2
+import numpy as np
+
+def preprocess_image(image):
+    """
+    Converts PIL image to grayscale and applies thresholding
+    to make text stand out (dot-matrix fix).
+    """
+    # Convert PIL to OpenCV format (numpy array)
+    img_array = np.array(image)
+    
+    # Convert to grayscale if not already
+    if len(img_array.shape) == 3:
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img_array
+
+    # Apply simple thresholding to binarize the image
+    # Values below 150 become 0 (black), above become 255 (white)
+    # This helps remove faint noise and strengthens the dot-matrix text
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    
+    # Optional: Dilate slightly to connect dots in dot-matrix
+    # kernel = np.ones((2,2), np.uint8)
+    # thresh = cv2.dilate(thresh, kernel, iterations=1)
+    
+    return Image.fromarray(thresh)
 
 def process_image(image_bytes):
     """
@@ -12,19 +39,27 @@ def process_image(image_bytes):
     """
     
     # Load image
-    image = Image.open(io.BytesIO(image_bytes))
+    original_image = Image.open(io.BytesIO(image_bytes))
+    
+    # Preprocess image
+    processed_image = preprocess_image(original_image)
     
     # Perform OCR
-    # Using specific configurations for structured text if needed
-    # --psm 6Assume a single uniform block of text. 4 is usually good too.
-    # But default often works. Let's try default first.
-    text = pytesseract.image_to_string(image)
+    # --psm 6: Assume a single uniform block of text.
+    # This works best for table-like structures.
+    custom_config = r'--psm 6' 
+    text = pytesseract.image_to_string(processed_image, config=custom_config)
     
     data = []
     
-    # Regex pattern to identify the lines
-    # Pattern: Date(YYYY-MM-DD) Time(HH:mm) ... Description ... Amount ... Document
-    # Example: 2022-09-05 15:08 POSTGRADO FAC.POLITE 4800.00 31571483
+    # Robust Regex Pattern
+    # This searches for:
+    # 1. Date+Time: (YYYY-MM-DD HH:mm)
+    # 2. Description: Anything in between (lazy match)
+    # 3. Amount: Number with decimal (e.g., 4800.00)
+    # 4. Document: Integer (e.g., 31571483)
+    # 5. It ignores any text after the Document number (like the "0-0 MAESTRIA..." part)
+    pattern = re.compile(r'^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2})\s+(.*?)\s+(\d+\.\d{2})\s+(\d+).*')
     
     lines = text.split('\n')
     
@@ -33,36 +68,19 @@ def process_image(image_bytes):
         if not line:
             continue
             
-        # Check if line starts with a date-like pattern
-        # YYYY-MM-DD
-        if re.match(r'^\d{4}-\d{2}-\d{2}', line):
-            parts = line.split()
+        match = pattern.match(line)
+        if match:
+            fecha = match.group(1)
+            descripcion = match.group(2).strip()
+            monto = match.group(3)
+            documento = match.group(4)
             
-            # We expect at least: Date, Time, Desc(1+), Amount, Doc
-            # Min 5 parts
-            if len(parts) >= 5:
-                fecha_hora = f"{parts[0]} {parts[1]}"
-                
-                # The last item is Document
-                documento = parts[-1]
-                
-                # The second to last is Monto
-                # However, sometimes OCR might split tokens oddly.
-                # Let's assume the basic structure holds for this clear printout.
-                monto = parts[-2]
-                
-                # Description is everything in between
-                descripcion = " ".join(parts[2:-2])
-                
-                # Clean up extracted data if necessary
-                # e.g. remove non-numeric chars from monto (except dot)
-                
-                data.append({
-                    "FECHA": fecha_hora,
-                    "DESCRIPCION": descripcion,
-                    "MONTO": monto,
-                    "DOCUMENTO": documento
-                })
-                
+            data.append({
+                "FECHA": fecha,
+                "DESCRIPCION": descripcion,
+                "MONTO": monto,
+                "DOCUMENTO": documento
+            })
+            
     df = pd.DataFrame(data)
     return df
